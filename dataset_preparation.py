@@ -1,80 +1,73 @@
-# dataset_preparation.py
-
-import os
-import re
-import random
 import torch
+from torch.utils.data import Dataset
 from datasets import load_dataset
-from collections import defaultdict
+from transformers import AutoTokenizer
+import os
 
-random.seed(42)
+class MSMARCOTripletDataset(Dataset):
+    def __init__(self, raw_data, tokenizer, max_length=128):
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.samples = self.generate_triplets(raw_data)
 
-def load_ms_marco():
-    print("Loading MS MARCO v1.1...")
-    dataset = load_dataset("ms_marco", "v1.1")
-    return dataset
+    def generate_triplets(self, data):
+        triplets = []
+        for item in data:
+            query = item.get("query", "")
+            passages = item.get("passages", {})
+            is_selected = passages.get("is_selected", [])
+            passage_text = passages.get("passage_text", [])
 
-def clean_text(text):
-    text = text.lower()
-    text = re.sub(r'[^a-z0-9\s]', '', text)
-    return text.strip()
+            # zip the labels and passages together
+            combined = list(zip(is_selected, passage_text))
 
-def tokenize(text):
-    return clean_text(text).split()
+            positives = [text for label, text in combined if label == 1]
+            negatives = [text for label, text in combined if label == 0]
 
-def build_vocab(triples, min_freq=2):
-    print("Building vocabulary...")
-    freq = defaultdict(int)
-    for q, p, n in triples:
-        for word in tokenize(q) + tokenize(p) + tokenize(n):
-            freq[word] += 1
+            if positives and negatives:
+                pos_text = positives[0]
+                for neg_text in negatives[:5]:
+                    triplets.append((query, pos_text, neg_text))
 
-    vocab = {"<PAD>": 0, "<UNK>": 1}
-    for word, count in freq.items():
-        if count >= min_freq:
-            vocab[word] = len(vocab)
-    print(f"Vocabulary size: {len(vocab)}")
-    return vocab
+        print(f"Generated {len(triplets)} triplets.")
+        return triplets
 
-def encode(text, vocab, max_len=30):
-    tokens = tokenize(text)
-    token_ids = [vocab.get(token, vocab["<UNK>"]) for token in tokens[:max_len]]
-    if len(token_ids) < max_len:
-        token_ids += [vocab["<PAD>"]] * (max_len - len(token_ids))
-    return torch.tensor(token_ids)
+    def __len__(self):
+        return len(self.samples)
 
-def create_triples(dataset_split, max_samples=5000):
-    print(f"Extracting up to {max_samples} triples...")
-    triples = []
-    for item in dataset_split:
-        query = item["query"]
-        positives = item["positive_passages"]
-        negatives = item["negative_passages"]
-        if positives and negatives:
-            triples.append((query, positives[0]["text"], negatives[0]["text"]))
-        if len(triples) >= max_samples:
-            break
-    print(f"Collected {len(triples)} triples.")
-    return triples
+    def __getitem__(self, idx):
+        query, pos, neg = self.samples[idx]
+        encoded_query = self.tokenizer(query, padding="max_length", truncation=True, max_length=self.max_length, return_tensors="pt")
+        encoded_pos = self.tokenizer(pos, padding="max_length", truncation=True, max_length=self.max_length, return_tensors="pt")
+        encoded_neg = self.tokenizer(neg, padding="max_length", truncation=True, max_length=self.max_length, return_tensors="pt")
 
-def process_data(triples, vocab, max_len=30):
-    print("Encoding triples...")
-    queries, positives, negatives = [], [], []
-    for q, p, n in triples:
-        queries.append(encode(q, vocab, max_len))
-        positives.append(encode(p, vocab, max_len))
-        negatives.append(encode(n, vocab, max_len))
-    return torch.stack(queries), torch.stack(positives), torch.stack(negatives)
+        return {
+            "query_input_ids": encoded_query["input_ids"].squeeze(0),
+            "query_attention_mask": encoded_query["attention_mask"].squeeze(0),
+            "pos_input_ids": encoded_pos["input_ids"].squeeze(0),
+            "pos_attention_mask": encoded_pos["attention_mask"].squeeze(0),
+            "neg_input_ids": encoded_neg["input_ids"].squeeze(0),
+            "neg_attention_mask": encoded_neg["attention_mask"].squeeze(0)
+        }
 
-def save_data(q, p, n, vocab, out_dir="processed_data"):
-    os.makedirs(out_dir, exist_ok=True)
-    torch.save({"query": q, "positive": p, "negative": n}, os.path.join(out_dir, "triples.pt"))
-    torch.save(vocab, os.path.join(out_dir, "vocab.pt"))
-    print(f"Saved data to {out_dir}/")
+def save_dataset():
+    # Load dataset
+    print("Loading MS MARCO v1.1 dataset...")
+    dataset = load_dataset("microsoft/ms_marco", "v1.1")
+    raw_train_data = dataset["train"]
+
+    # print("First sample:", raw_train_data[0])
+
+    # Load tokenizer
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+
+    # Prepare dataset
+    triplet_dataset = MSMARCOTripletDataset(raw_train_data, tokenizer)
+
+    # Save dataset as a torch file
+    output_path = "msmarco_triplets.pt"
+    torch.save(triplet_dataset, output_path)
+    print(f"Saved preprocessed dataset to {output_path}")
 
 if __name__ == "__main__":
-    dataset = load_ms_marco()
-    triples = create_triples(dataset["train"], max_samples=5000)
-    vocab = build_vocab(triples)
-    q, p, n = process_data(triples, vocab)
-    save_data(q, p, n, vocab)
+    save_dataset()
