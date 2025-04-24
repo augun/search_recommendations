@@ -28,27 +28,28 @@ model.to(DEVICE)
 model.eval()
 
 # --- Fast retrieval function ---
-def search(query_text):
+def search(query_text, top_k=5):
     model.eval()
     with torch.no_grad():
-        # Encode query
         inputs = tokenizer(query_text, return_tensors="pt", padding="max_length", truncation=True, max_length=MAX_LENGTH)
         input_ids = inputs["input_ids"].to(DEVICE)
         attention_mask = inputs["attention_mask"].to(DEVICE)
 
         query_vec = model.encode_query(input_ids, attention_mask).cpu()
+        sims = cosine_similarity(query_vec, doc_vectors)  # shape: [N_docs]
 
-        # Compute cosine similarity
-        sims = cosine_similarity(query_vec, doc_vectors)  # [N_docs]
-        top_indices = sims.argsort(descending=True)[:TOP_K]
+        top_indices = sims.argsort(descending=True)[:top_k]
 
-        # Show results
         print(f"\n🔍 Query: {query_text}")
-        print("Top results:")
+        print("Top {top_k} results:")
         for rank, idx in enumerate(top_indices):
             score = sims[idx].item()
             passage = doc_texts[idx]
             print(f"{rank+1}. [Score: {score:.4f}] {passage[:100]}...")
+
+# === Accept any query input from user
+query = input("Enter your query: ")
+search(query, top_k=5)
 
 # --- Try it!
 search("what is results-based accountability")

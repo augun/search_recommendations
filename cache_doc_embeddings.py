@@ -26,7 +26,7 @@ model.eval()
 
 # Load dataset
 dataset = load_dataset("microsoft/ms_marco", "v1.1")
-doc_items = dataset["train"].select(range(1000))  # adjust this to cache more
+doc_items = dataset["train"] # adjust this to cache more
 
 # --- Pre-encode document embeddings ---
 encoded_vectors = []

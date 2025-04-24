@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 class TowerEncoder(nn.Module):
     def __init__(self, vocab_size, embedding_dim, hidden_dim, embedding_weights=None, freeze_embeddings=False):
@@ -21,10 +20,19 @@ class TowerEncoder(nn.Module):
         )
 
     def forward(self, input_ids, attention_mask):
-        embedded = self.embedding(input_ids)
-        packed_input = torch.mul(embedded, attention_mask.unsqueeze(-1))
-        _, hidden = self.rnn(packed_input)
-        return hidden.squeeze(0)  # shape: (batch_size, hidden_dim)
+        embedded = self.embedding(input_ids)  # [batch, seq_len, embed_dim]
+        outputs, _ = self.rnn(embedded)       # [batch, seq_len, hidden_dim]
+
+        # Apply mask to zero out padding outputs
+        mask = attention_mask.unsqueeze(-1).type_as(outputs)  # [batch, seq_len, 1]
+        masked_outputs = outputs * mask
+
+        # Average over the sequence length (only non-padding tokens)
+        summed = masked_outputs.sum(dim=1)  # [batch, hidden_dim]
+        count = mask.sum(dim=1).clamp(min=1e-9)  # avoid division by zero
+        mean_pooled = summed / count
+
+        return mean_pooled  # shape: [batch, hidden_dim]
 
 
 class TwoTowerModel(nn.Module):
