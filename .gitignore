@@ -3,3 +3,5 @@ doc_vectors.pt
 doc_texts.pkl
 two_tower_model.pt
 msmarco_triplets.pt
+*.pt
+*.pt
